@@ -9,7 +9,35 @@ pip install -r requirements.txt
 ```
 
 ## Downloading and parsing the data
-1. Run `download_page_list.py` in order to download the list of monster entry URLs:
+1. Run `run_all.py` to execute the full pipeline with a single command:
+
+```
+python run_all.py
+```
+
+This will run `download_page_list.py`, `download_pages.py`, `get_classes.py`, and `main.py` sequentially.
+
+You can also pass options to control individual steps:
+
+```
+python run_all.py --data-dir data
+python run_all.py --skip-download-list
+python run_all.py --skip-download-pages
+python run_all.py --skip-classes
+python run_all.py --skip-main
+python run_all.py --url https://aonsrd.com/Aliens.aspx?Letter=All
+```
+
+- `--data-dir`: set the base data directory (default: `data`)
+- `--skip-download-list`: skip generating `data/urls.txt`
+- `--skip-download-pages`: skip fetching individual HTML pages
+- `--skip-classes`: skip downloading class hit points
+- `--skip-main`: skip generating markdown output
+- `--url`: pass one or more URLs to `download_page_list.py`
+
+2. If you prefer, you can still run the individual steps separately.
+
+3. Run `download_page_list.py` in order to download the list of monster entry URLs:
 
 ```
 python download_page_list.py
