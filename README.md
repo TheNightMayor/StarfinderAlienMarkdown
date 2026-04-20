@@ -1,5 +1,5 @@
-# PathfinderMonsterDatabase
-A database of all monsters in starfinder 1e, created by parsing aonsrd.com
+# StarfinderAlienMarkdown
+A parser and markdown converter of all aliens in starfinder 1e for use in obsidian.md. created by parsing aonsrd.com
 
 ## Setup
 
