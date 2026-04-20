@@ -31,6 +31,8 @@ if __name__ == "__main__":
 
 	# Create output directory if it doesn't exist
 	Path(outdir).mkdir(parents=True, exist_ok=True)
+	html_dir = os.path.join(outdir, "html")
+	Path(html_dir).mkdir(parents=True, exist_ok=True)
 
 	# Write a copy of the URL list to the data folder if one does not exist
 	if not os.path.isfile(os.path.join(outdir, "urls.txt")):
@@ -48,7 +50,7 @@ if __name__ == "__main__":
 			print(type(e).__name__ + ": " + str(e))
 		tSpent = time.time() - t
 
-		with open(os.path.join(outdir, str(i) + '.html'), 'w', encoding='utf-8') as fp:
+		with open(os.path.join(html_dir, str(i) + '.html'), 'w', encoding='utf-8') as fp:
 			fp.write(html)
 
 		# Avoid getting rate limited

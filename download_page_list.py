@@ -2,7 +2,7 @@ from bs4 import BeautifulSoup
 import requests
 import sys
 import traceback
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlparse, parse_qsl
 import os
 from pathlib import Path
 
@@ -11,7 +11,7 @@ if __name__ == "__main__":
 	if len(sys.argv) > 1:
 		pagelisturls = sys.argv[1:]
 	else:
-		pagelisturls = ["https://aonprd.com/Monsters.aspx?Letter=All", "https://aonprd.com/NPCs.aspx?SubGroup=All", "https://aonprd.com/MythicMonsters.aspx?Letter=All"]
+		pagelisturls = ["https://aonsrd.com/Aliens.aspx?Letter=All"]
 	
 	outfile = "data/urls.txt"
 
@@ -33,8 +33,16 @@ if __name__ == "__main__":
 		# Parse page
 		soup = BeautifulSoup(html, "html.parser")
 		elems = soup.select("#main table tr td:first-child a")
-		urls = [e['href'].split("=")[0] + "=" + quote(e['href'].split("=")[1], safe='/()') for e in elems]
-		urls = [("" if u.startswith("https://aonprd.com/") else "https://aonprd.com/") + u for u in urls]
+		urls = []
+		for e in elems:
+			href = e['href']
+			full_url = urljoin(url, href)
+			parsed = urlparse(full_url)
+			encoded_query = "&".join(
+				f"{quote(name, safe='')}={quote(value, safe='/()')}"
+				for name, value in parse_qsl(parsed.query, keep_blank_values=True)
+			)
+			urls.append(parsed._replace(query=encoded_query).geturl())
 		allurls += urls
 		
 	# Remove duplicates and sort

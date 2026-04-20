@@ -1,17 +1,46 @@
 from bs4 import BeautifulSoup
 import requests
 import re
-from urllib.parse import quote
+from urllib.parse import urljoin
 import os
 from tqdm.auto import tqdm
 from pathlib import Path
 import json
 
 
+def extract_hit_points(soup, html, url):
+    elem = soup.find('b', string=re.compile(r'Hit Points', re.I))
+    if elem is not None:
+        sibling = elem.next_sibling
+        while sibling is not None and (not isinstance(sibling, str) or not sibling.strip()):
+            sibling = sibling.next_sibling
+        if sibling is not None:
+            result = re.search(r":\s*(\d+)", str(sibling))
+            if result:
+                return int(result.group(1))
+
+    result = re.search(r"<b>\s*Hit Points\s*</b>\s*:\s*(\d+)", html, re.I)
+    if result:
+        return int(result.group(1))
+
+    for table in soup.select('table.inner'):
+        headers = [th.get_text(strip=True) for th in table.select('tr:first-child b')]
+        if 'Hit Points' in headers:
+            hp_index = headers.index('Hit Points')
+            first_row = table.select_one('tr:nth-of-type(2)')
+            if first_row is not None:
+                cells = [td.get_text(strip=True) for td in first_row.select('td')]
+                if hp_index < len(cells):
+                    cell = cells[hp_index]
+                    result = re.search(r"(\d+)", cell)
+                    if result:
+                        return int(result.group(1))
+
+    raise AssertionError(url)
+
+
 if __name__ == "__main__":
-    url_classes = "https://aonprd.com/Classes.aspx"
-    url_prestige = "https://aonprd.com/PrestigeClasses.aspx"
-    url_mythic = "https://aonprd.com/MythicPaths.aspx"
+    url_classes = "https://aonsrd.com/Classes.aspx"
     outfile = "data/class_hds.json"
 
     classes = {}
@@ -25,66 +54,22 @@ if __name__ == "__main__":
     # Class list page
     html = requests.get(url_classes).text
     soup = BeautifulSoup(html, "html.parser")
-    elems = soup.select("#MainContent_AllClassLabel a")
-    entries = [(e.get_text().strip(), e['href'].split("=")[0] + "=" + quote(e['href'].split("=")[1], safe='/()')) for e in elems]
+    elems = soup.select("#ctl00_MainContent_FullClassList a")
+    if not elems:
+        elems = soup.select("a[href^='Classes.aspx?ItemName=']")
 
-    # Prestige class list page
-    html = requests.get(url_prestige).text
-    soup = BeautifulSoup(html, "html.parser")
-    elems = soup.select("#MainContent_GridViewPrestigeClasses td:first-child a")
-    entries += [(e.get_text().strip(), e['href'].split("=")[0] + "=" + quote(e['href'].split("=")[1], safe='/()')) for e in elems]
+    entries = []
+    for e in elems:
+        href = e['href']
+        entries.append((e.get_text().strip(), urljoin(url_classes, href)))
 
-    # Get hit dice from individual pages
+    # Get hit points from individual pages
     for name, url in tqdm(entries):
         name = name.strip()
-        if name == "Familiar":  # Special case - no hit die
-            classes[name] = None
-            continue
-
-        if not url.startswith("https://aonprd.com/"):
-            url = "https://aonprd.com/" + url
         html = requests.get(url).text
         soup = BeautifulSoup(html, "html.parser")
-        # Normal classes
-        elem = soup.select_one("#MainContent_DataListTypes_LabelName_0")
-        result = re.search(r"Hit Die: d(\d+)\.", elem.get_text())
-        if not result is None:
-            classes[name] = int(result.group(1))
-            continue
-        # Weird classes (e.g. Companion)
-        elems = soup.find_all('b', string="HD")
-        assert len(elems) > 0, url
-        for elem in elems: # Find the first one in the overall span (so not the table header)
-            if elem.parent.name != "span":
-                continue
-            result = re.search(r"\(d(\d+)\)", elem.nextSibling.get_text())
-            assert not result is None, url
-            classes[name] = int(result.group(1))
-            break
-        else:
-            assert False, url
-
-    # Mythic paths all give no hit dice - we encode this as a d0
-    html = requests.get(url_mythic).text
-    soup = BeautifulSoup(html, "html.parser")
-    elems = soup.select("#main > h1 a")
-    for e in elems:
-        classes[e.get_text()] = 0
-    
-    # Add some manual ones
-    classes.update({
-        "Geokineticist": classes["Kineticist"],
-        "Hydrokineticist": classes["Kineticist"],
-        "Abjurer": classes["Wizard"],
-        "Conjurer": classes["Wizard"],
-        "Diviner": classes["Wizard"],
-        "Enchanter": classes["Wizard"],
-        "Evoker": classes["Wizard"],
-        "Illusionist": classes["Wizard"],
-        "Necromancer": classes["Wizard"],
-        "Transmuter": classes["Wizard"]
-    })
+        classes[name] = extract_hit_points(soup, html, url)
 
     # Write the results to disk
     with open(outfile, 'w') as fp:
-        json.dump(classes, fp)
+        json.dump(classes, fp, indent=2)
