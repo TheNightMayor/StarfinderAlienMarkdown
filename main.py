@@ -243,23 +243,51 @@ def parsePage(html, url):
     offense_text = _collect_until_header("Offense")
     if offense_text:
         pageObject["offense"] = {}
-        normalized = offense_text.replace("\n", " ").strip()
-        match = re.search(r'Speed\s+(.+?)(?=(?:Reach|Melee|Ranged|Offensive Abilities|Spell-Like Abilities|$))', normalized)
+        normalized = offense_text.strip()
+        match = re.search(r'Speed\s+(.+?)(?=(?:Reach|Melee|Ranged|Offensive Abilities|Spell-Like Abilities|Spells|$))', normalized)
         if match:
             pageObject["offense"]["speed"] = match.group(1).strip()
-        match = re.search(r'Melee\s+(.+?)(?=(?:Ranged|Offensive Abilities|Spell-Like Abilities|$))', normalized)
+        match = re.search(r'Melee\s+(.+?)(?=(?:Ranged|Offensive Abilities|Spell-Like Abilities|Spells|$))', normalized)
         if match:
             pageObject["offense"]["melee"] = match.group(1).strip()
-        match = re.search(r'Ranged\s+(.+?)(?=(?:Melee|Offensive Abilities|Spell-Like Abilities|$))', normalized)
+        match = re.search(r'Ranged\s+(.+?)(?=(?:Melee|Offensive Abilities|Spell-Like Abilities|Spells|$))', normalized)
         if match:
             pageObject["offense"]["ranged"] = match.group(1).strip()
-        match = re.search(r'Offensive Abilities\s+(.+?)(?=(?:Spell-Like Abilities|$))', normalized)
+        match = re.search(r'Offensive Abilities\s+(.+?)(?=(?:Spell-Like Abilities|Spells|$))', normalized)
         if match:
             pageObject["offense"]["offensive_abilities"] = match.group(1).strip()
-        match = re.search(r'Spell-Like Abilities\s+(.+)', normalized)
-        if match:
-            pageObject["offense"]["spell_like_abilities"] = match.group(1).strip()
-        reach_match = re.search(r'Reach\s+(.+?)(?=(?:;|Melee|Ranged|Offensive Abilities|Spell-Like Abilities|$))', normalized)
+
+        def _split_spell_heading(line, regex):
+            heading_match = re.search(regex, line, re.I)
+            if not heading_match:
+                return None, None
+            heading = heading_match.group(1).strip()
+            remainder = line[heading_match.end():].strip()
+            return heading, remainder
+
+        spell_sections = []
+        for line in [ln.strip() for ln in offense_text.splitlines() if ln.strip()]:
+            if re.search(r'\bSpell-Like Abilities\b', line, re.I):
+                heading, remainder = _split_spell_heading(line, r'(Spell-Like Abilities(?:\s*\([^)]*\))?)')
+                if heading:
+                    spell_sections.append({"title": heading, "items": []})
+                    if remainder:
+                        spell_sections[-1]["items"].append(remainder)
+                    continue
+            if re.search(r'\bSpells?(?:\s+(?:Known|Prepared|Readied))?\b', line, re.I) and not re.search(r'\bSpell-Like Abilities\b', line, re.I):
+                heading, remainder = _split_spell_heading(line, r'((?:\w+\s+)?Spells?(?:\s+(?:Known|Prepared|Readied))?(?:\s*\([^)]*\))?)')
+                if heading:
+                    spell_sections.append({"title": heading, "items": []})
+                    if remainder:
+                        spell_sections[-1]["items"].append(remainder)
+                    continue
+            if spell_sections:
+                spell_sections[-1]["items"].append(line)
+
+        if spell_sections:
+            pageObject["offense"]["spells"] = spell_sections
+
+        reach_match = re.search(r'Reach\s+(.+?)(?=(?:;|Melee|Ranged|Offensive Abilities|Spell-Like Abilities|Spells|$))', normalized)
         if reach_match:
             pageObject["reach"] = reach_match.group(1).strip()
 
@@ -401,7 +429,12 @@ def yaml_list(name, items, key_name=None):
                 for k, v in item.items():
                     lines.append(f"    {k}: {yaml_quote(v)}")
         else:
-            lines.append(f"  - {yaml_quote(item)}")
+            if name == "Spells" and ": " in item:
+                key, value = item.split(": ", 1)
+                quoted_value = '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
+                lines.append(f"  - {key}: {quoted_value}")
+            else:
+                lines.append(f"  - {yaml_quote(item)}")
     return lines
 
 
@@ -466,6 +499,39 @@ def render_markdown(pageObject):
             out.append({"name": "Resistances", "desc": defense.get("resistances")})
         if defense.get("SR") is not None:
             out.append({"name": "SR", "desc": defense.get("SR")})
+        return out
+
+    def format_spell_sections(sections):
+        out = []
+        if not sections:
+            return out
+        for section in sections:
+            title = section.get("title", "").strip()
+            if title:
+                m = re.match(r'(.+?)(\s*\([^)]*\))?$', title)
+                if m:
+                    heading = f"**{m.group(1).strip()}**" + (m.group(2) or "")
+                else:
+                    heading = f"**{title}**"
+                out.append(heading)
+            for item in section.get("items", []):
+                if not item:
+                    continue
+                pieces = re.split(
+                    r'(?=(?:At will|[0-9]+(?:st|nd|rd|th)?\s*\([^)]*\)|[0-9]+/(?:day|rounds?|week|weeks?))\s*[:—–-])',
+                    item,
+                    flags=re.I,
+                )
+                for piece in pieces:
+                    piece = piece.strip()
+                    if not piece:
+                        continue
+                    normalized_piece = re.sub(
+                        r'(?i)\b(At will|[0-9]+(?:st|nd|rd|th)?\s*\([^)]*\)|[0-9]+/(?:day|rounds?|week|weeks?))\s*[—–-]\s*',
+                        r'\1: ',
+                        piece,
+                    )
+                    out.append(normalized_piece.strip())
         return out
 
     lines = ["---"]
@@ -554,6 +620,11 @@ def render_markdown(pageObject):
         lines.append("offabilities:")
         lines.append(f"  - name: Offensive Abilities")
         lines.append(f"    desc: {yaml_quote(pageObject['offense']['offensive_abilities'])}")
+    spell_sections = pageObject.get("offense", {}).get("spells")
+    if spell_sections:
+        spell_lines = format_spell_sections(spell_sections)
+        if spell_lines:
+            lines.extend(yaml_list("Spells", spell_lines))
     special_abilities = parse_special_abilities(pageObject.get("special_abilities"))
     if special_abilities:
         lines.append("specialabil:")
