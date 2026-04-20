@@ -59,7 +59,14 @@ def parsePage(html, url):
     if e is None:
         raise ValueError("Unable to find the main alien block for " + url)
 
-    title1 = e.find("h1", class_="title")
+    title1 = None
+    for title_tag in e.find_all("h1", class_="title"):
+        if title_tag.find("a"):
+            title1 = title_tag
+            break
+    if title1 is None:
+        title1 = e.find("h1", class_="title")
+
     title1_text = title1.get_text(strip=True) if title1 else None
     pageObject["title1"] = title1_text
     pageObject["family"] = None
@@ -104,11 +111,37 @@ def parsePage(html, url):
             cr_value = result.group(2)
             pageObject["CR"] = float(Fraction(cr_value)) if "/" in cr_value else parseInt(cr_value, stringIfFail=True)
 
+    def _family_first_title(title, family):
+        if not title or not family:
+            return title
+        family = family.strip()
+        title = title.strip()
+        if not family or not title:
+            return title
+        family_regex = re.compile(rf'\b{re.escape(family)}\b', re.I)
+        variant = family_regex.sub('', title).strip()
+        variant = re.sub(r'[\s,]+', ' ', variant).strip()
+        if not variant:
+            return family
+        return f"{family} {variant}"
+
     if pageObject.get("family") and pageObject.get("title1"):
-        title_lower = pageObject["title1"].lower()
-        family_lower = pageObject["family"].lower()
-        if not re.search(rf'\b{re.escape(family_lower)}\b', title_lower):
-            pageObject["title1"] = f"{pageObject['family']} {pageObject['title1']}"
+        pageObject["title1"] = _family_first_title(pageObject["title1"], pageObject["family"])
+
+    def _text_before_header(node):
+        if isinstance(node, NavigableString):
+            return str(node), False
+        if getattr(node, "name", None) == "br":
+            return "\n", False
+        if getattr(node, "name", None) in ["h2", "h3"] and "framing" in (node.get("class") or []):
+            return "", True
+        result = []
+        for child in node.contents:
+            text, stop = _text_before_header(child)
+            result.append(text)
+            if stop:
+                return "".join(result), True
+        return "".join(result), False
 
     def _collect_until_header(header_name):
         header = e.find("h3", class_="framing", string=header_name)
@@ -116,16 +149,18 @@ def parsePage(html, url):
             return None
         result = []
         node = header.next_sibling
-        while node is not None and not (
-            getattr(node, "name", None) in ["h2", "h3"] and
-            "framing" in (node.get("class") or [])
-        ):
+        while node is not None:
+            if getattr(node, "name", None) in ["h2", "h3"] and "framing" in (node.get("class") or []):
+                break
             if isinstance(node, NavigableString):
                 result.append(str(node))
             elif getattr(node, "name", None) == "br":
                 result.append("\n")
             else:
-                result.append(node.get_text())
+                text, stop = _text_before_header(node)
+                result.append(text)
+                if stop:
+                    break
             node = node.next_sibling
         return "".join(result).strip()
 
@@ -164,6 +199,10 @@ def parsePage(html, url):
         perception_match = re.search(r'Perception\s+([+-]?\d+)', summary_text)
         if perception_match:
             pageObject["perception"] = parseInt(perception_match.group(1))
+
+        aura_match = re.search(r'Aura\s+(.+?)(?:;|$)', summary_text, re.I)
+        if aura_match:
+            pageObject["aura"] = aura_match.group(1).strip()
 
         reach_match = re.search(r'Reach\s+(.+?)(?:;|$)', summary_text)
         if reach_match:
@@ -300,6 +339,9 @@ def parsePage(html, url):
                 k: (None if v.strip() in ["-", "—"] else int(v))
                 for k, v in zip(["STR", "DEX", "CON", "INT", "WIS", "CHA"], result.groups())
             }
+        result = re.search(r'Feats\s+([\s\S]+?)(?=(?:Skills|Languages|Other Abilities|$))', statistics_text)
+        if result:
+            pageObject["statistics"]["feats"] = result.group(1).strip()
         result = re.search(r'Skills\s+([\s\S]+?)(?=(?:Languages|Other Abilities|$))', statistics_text)
         if result:
             pageObject["statistics"]["skills"] = result.group(1).strip()
@@ -316,15 +358,12 @@ def parsePage(html, url):
     ecology_text = _collect_until_header("Ecology")
     if ecology_text:
         pageObject["ecology"] = {}
-        result = re.search(r'Environment\s+(.+?)(?=(?:Organization|Treasure|$))', ecology_text)
+        result = re.search(r'Environment\s+(.+?)(?=(?:Organization|$))', ecology_text)
         if result:
             pageObject["ecology"]["environment"] = result.group(1).strip()
-        result = re.search(r'Organization\s+(.+?)(?=(?:Treasure|$))', ecology_text)
+        result = re.search(r'Organization\s+(.+)', ecology_text)
         if result:
             pageObject["ecology"]["organization"] = result.group(1).strip()
-        result = re.search(r'Treasure\s+(.+)', ecology_text)
-        if result:
-            pageObject["ecology"]["treasure"] = result.group(1).strip()
 
     def _text_with_spacing(node):
         if isinstance(node, NavigableString):
@@ -583,6 +622,7 @@ def render_markdown(pageObject):
         add_field("modifier", init_value)
     add_field("Speed", pageObject.get("offense", {}).get("speed"))
     add_field("Reach", pageObject.get("reach"))
+    add_field("Aura", pageObject.get("aura"))
     ability_scores = pageObject.get("statistics", {}).get("ability_scores")
     if ability_scores:
         lines.append("abilitymods:")
@@ -593,6 +633,7 @@ def render_markdown(pageObject):
         lines.append("Skills:")
         for skill in skills:
             lines.append(f"  - {skill['name']}: {yaml_quote_skill_desc(skill['desc'])}")
+    add_field("feats", pageObject.get("statistics", {}).get("feats"))
     add_field("Languages", pageObject.get("statistics", {}).get("languages"))
     add_field("Gear", pageObject.get("statistics", {}).get("gear"))
     add_field("Senses", pageObject.get("senses"))
@@ -655,6 +696,10 @@ def render_markdown(pageObject):
     add_field("source", pageObject.get("source"))
     lines.append("statblock: true")
     lines.append("---")
+    if pageObject.get("title1"):
+        lines.append("```statblock")
+        lines.append(f"creature: {yaml_quote(pageObject.get('title1'))}")
+        lines.append("```")
     if pageObject.get("desc_long"):
         lines.append(pageObject["desc_long"])
     return "\n".join(lines).rstrip() + "\n"
@@ -756,11 +801,12 @@ if __name__ == "__main__":
 
     markdown_dir = os.path.join(base_datapath, 'markdown')
     os.makedirs(markdown_dir, exist_ok=True)
-    for existing_name in os.listdir(markdown_dir):
-        if existing_name.endswith('.md'):
-            os.remove(os.path.join(markdown_dir, existing_name))
+    written_files = {}
     for url, pageObject in pageObjects.items():
         filename = sanitize_filename(pageObject.get('title1') or url)
         file_path = os.path.join(markdown_dir, f"{filename}.md")
+        if filename in written_files:
+            print(f"Overwriting file with matching name: {filename}.md (previously from {written_files[filename]})")
+        written_files[filename] = url
         with open(file_path, 'w', encoding='utf-8') as md_file:
             md_file.write(render_markdown(pageObject))
