@@ -1,5 +1,5 @@
 # PathfinderMonsterDatabase
-A database of all monsters in Pathfinder 1e, created by parsing aonprd.com
+A database of all monsters in starfinder 1e, created by parsing aonsrd.com
 
 ## Setup
 
@@ -16,7 +16,7 @@ python download_page_list.py
 ```
 
 By default, this will get all monsters, NPCs, and mythic monsters.
-You can also specify a URL as a parameter to the script to get just the monster entries from there (e.g. https://aonprd.com/Monsters.aspx?Letter=All).
+You can also specify a URL as a parameter to the script to get just the monster entries from there (e.g. https://aonsrd.com/Aliens.aspx?Letter=All).
 Alternatively, you can just create the `data/urls.txt` file yourself.
 
 2. Run `download_pages.py` to download each individual monster entry page:
